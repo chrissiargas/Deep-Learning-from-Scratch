@@ -58,11 +58,6 @@ def pow2(x):
 
 tf.random.set_seed = 42
 
-def sigmoid(x):
-  return 1 / (1 + np.exp(-x))
-
-def sigmoid_derivative(x):
-    return sigmoid(x)*sigmoid(-x)
 
 class NN:
     def __init__(self,
@@ -226,6 +221,7 @@ class NN:
             self.dropoutProb = []
             for _ in range(self.numberOfLayers):
                 self.dropoutProb.append(dropoutProb)
+
 
         nextLayer = targets.shape[1]
 
@@ -443,7 +439,7 @@ class NN:
                 pass
 
             else:
-                output = tf.sigmoid(output)
+                pass
 
 
             if dropoutLayer and not training:
@@ -476,110 +472,107 @@ class NN:
         return error
 
     def backPropagation(self,error,t,lr):
-
+        dError_dWeights = t.gradient(error, self.parameters)
         if not self.optimizer:
-            dError_dWeights = t.gradient(error, self.parameters)
 
             if self.epoch == 0:
 
                 self.velocity = []
 
-                dPindex = 0
-                for dParameter in dError_dWeights:
+
+                for dIndex,dParameter in enumerate(dError_dWeights):
 
                     self.velocity.append([])
                     for elP in dParameter:
-                        self.velocity[dPindex].append(-lr * elP)
-                    dPindex += 1
+                        self.velocity[dIndex].append(-lr * elP)
+
 
             else:
-                for dPindex, dParameter in enumerate(dError_dWeights):
-                    for index, elP in enumerate(dParameter):
-                        self.velocity[dPindex][index] = - lr * elP
+                for dIndex, dParameter in enumerate(dError_dWeights):
+                    for elIndex, elP in enumerate(dParameter):
+                        self.velocity[dIndex][elIndex] = - lr * elP
 
 
         elif self.optimizer == "momentum" or self.optimizer == "nesterov":
-            dError_dWeights = t.gradient(error, self.parameters)
+
 
             if self.epoch == 0:
 
                 self.velocity = []
 
-                for dPindex, dParameter in enumerate(dError_dWeights):
+                for dIndex, dParameter in enumerate(dError_dWeights):
 
                     self.velocity.append([])
                     for el in dParameter:
-                        self.velocity[dPindex].append(-lr * el)
+                        self.velocity[dIndex].append(-lr * el)
 
 
 
             else:
 
-                for dPindex, (dParameter, dVelocity) in enumerate(zip(dError_dWeights, self.velocity)):
-                    for index, (elP, elV) in enumerate(zip(dParameter, dVelocity)):
-                        self.velocity[dPindex][index] = self.momentum * elV - lr * elP
+                for dIndex, (dParameter, dVelocity) in enumerate(zip(dError_dWeights, self.velocity)):
+                    for elIndex, (elP, elV) in enumerate(zip(dParameter, dVelocity)):
+                        self.velocity[dIndex][elIndex] = self.momentum * elV - lr * elP
 
 
 
         elif self.optimizer == "adagrad":
             zero = 1e-8
-            dError_dWeights = t.gradient(error, self.parameters)
 
             if self.epoch == 0:
 
                 self.velocity = []
                 self.sumGrad = []
 
-                for dPindex, dParameter in enumerate(dError_dWeights):
+                for dIndex, dParameter in enumerate(dError_dWeights):
 
                     self.velocity.append([])
                     self.sumGrad.append([])
-                    for index, el in enumerate(dParameter):
-                        self.sumGrad[dPindex].append(el * el)
-                        self.velocity[dPindex].append(-lr * el / tf.sqrt(self.sumGrad[dPindex][index] + zero))
+                    for elIndex, el in enumerate(dParameter):
+                        self.sumGrad[dIndex].append(el * el)
+                        self.velocity[dIndex].append(-lr * el / tf.sqrt(self.sumGrad[dIndex][elIndex] + zero))
 
 
             else:
 
-                for dPindex, (dParameter, dVelocity, dSG) in enumerate(
+                for dIndex, (dParameter, dVelocity, dSG) in enumerate(
                         zip(dError_dWeights, self.velocity, self.sumGrad)):
-                    for index, (elP, elV, elSG) in enumerate(zip(dParameter, dVelocity, dSG)):
-                        self.sumGrad[dPindex][index] += elP * elP
-                        self.velocity[dPindex][index] = -lr * elP / tf.sqrt(elSG + zero)
+                    for elIndex, (elP, elV, elSG) in enumerate(zip(dParameter, dVelocity, dSG)):
+                        self.sumGrad[dIndex][elIndex] += elP * elP
+                        self.velocity[dIndex][elIndex] = -lr * elP / tf.sqrt(elSG + zero)
 
 
         elif self.optimizer == "RMSProp":
 
             zero = 1e-8
-            dError_dWeights = t.gradient(error, self.parameters)
 
             if self.epoch == 0:
 
                 self.velocity = []
                 self.sumGrad = []
 
-                for dPindex, dParameter in enumerate(dError_dWeights):
+                for dIndex, dParameter in enumerate(dError_dWeights):
 
                     self.velocity.append([])
                     self.sumGrad.append([])
-                    for index, el in enumerate(dParameter):
-                        self.sumGrad[dPindex].append((1 - self.decayRate) * el * el)
-                        self.velocity[dPindex].append(-lr * el / tf.sqrt(self.sumGrad[dPindex][index] + zero))
+                    for elIndex, el in enumerate(dParameter):
+                        self.sumGrad[dIndex].append((1 - self.decayRate) * el * el)
+                        self.velocity[dIndex].append(-lr * el / tf.sqrt(self.sumGrad[dIndex][elIndex] + zero))
 
 
 
             else:
 
-                for dPindex, (dParameter, dVelocity, dSG) in enumerate(
+                for dIndex, (dParameter, dVelocity, dSG) in enumerate(
                         zip(dError_dWeights, self.velocity, self.sumGrad)):
-                    for index, (elP, elV, elSG) in enumerate(zip(dParameter, dVelocity, dSG)):
-                        self.sumGrad[dPindex][index] = self.decayRate * elSG + (1 - self.decayRate) * elP * elP
-                        self.velocity[dPindex][index] = -lr * elP / tf.sqrt(elSG + zero)
+                    for elIndex, (elP, elV, elSG) in enumerate(zip(dParameter, dVelocity, dSG)):
+                        self.sumGrad[dIndex][elIndex] = self.decayRate * elSG + (1 - self.decayRate) * elP * elP
+                        self.velocity[dIndex][elIndex] = -lr * elP / tf.sqrt(elSG + zero)
 
         elif self.optimizer == "adam" or self.optimizer == "nadam":
 
             zero = 1e-8
-            dError_dWeights = t.gradient(error, self.parameters)
+
 
             if self.epoch == 0:
 
@@ -589,8 +582,8 @@ class NN:
                 self.sumGrad = []
                 self.sumGradHat = []
 
-                dPindex = 0
-                for dParameter in dError_dWeights:
+
+                for dIndex,dParameter in enumerate(dError_dWeights):
 
                     self.velocity.append([])
                     self.sumGrad.append([])
@@ -599,48 +592,48 @@ class NN:
                     self.sumMomHat.append([])
 
                     for el in dParameter:
-                        self.sumMom[dPindex].append(-(1 - self.beta1) * el)
-                        self.sumMomHat[dPindex].append(el)
-                        self.sumGrad[dPindex].append((1 - self.beta2) * el * el)
-                        self.sumGradHat[dPindex].append(el * el)
-                        self.velocity[dPindex].append(lr * el / tf.sqrt(el * el + zero))
+                        self.sumMom[dIndex].append(-(1 - self.beta1) * el)
+                        self.sumMomHat[dIndex].append(el)
+                        self.sumGrad[dIndex].append((1 - self.beta2) * el * el)
+                        self.sumGradHat[dIndex].append(el * el)
+                        self.velocity[dIndex].append(lr * el / tf.sqrt(el * el + zero))
 
-                    dPindex += 1
+                    dIndex += 1
 
             else:
-                for dPindex, (dParameter, dVelocity, dSG, dSM) in enumerate(
+                for dIndex, (dParameter, dVelocity, dSG, dSM) in enumerate(
                         zip(dError_dWeights, self.velocity, self.sumGrad, self.sumMom)):
                     for index, (elP, elV, elSG, elSM) in enumerate(zip(dParameter, dVelocity, dSG, dSM)):
-                        self.sumMom[dPindex][index] = self.beta1 * elSM - (1 - self.beta1) * elP
-                        self.sumGrad[dPindex][index] = self.beta2 * elSG + (1 - self.beta2) * elP * elP
-                        self.sumMomHat[dPindex][index] = self.sumMom[dPindex][index] / (
+                        self.sumMom[dIndex][index] = self.beta1 * elSM - (1 - self.beta1) * elP
+                        self.sumGrad[dIndex][index] = self.beta2 * elSG + (1 - self.beta2) * elP * elP
+                        self.sumMomHat[dIndex][index] = self.sumMom[dIndex][index] / (
                                     1 - self.beta1 ** (self.epoch + 1))
-                        self.sumGradHat[dPindex][index] = self.sumGrad[dPindex][index] / (
+                        self.sumGradHat[dIndex][index] = self.sumGrad[dIndex][index] / (
                                     1 - self.beta1 ** (self.epoch + 1))
-                        self.velocity[dPindex][index] = lr * self.sumMomHat[dPindex][index] / tf.sqrt(
-                            self.sumGradHat[dPindex][index] + zero)
+                        self.velocity[dIndex][index] = lr * self.sumMomHat[dIndex][index] / tf.sqrt(
+                            self.sumGradHat[dIndex][index] + zero)
 
 
 
         else:
-            dError_dWeights = t.gradient(error, self.parameters)
+
 
             if self.epoch == 0:
 
                 self.velocity = []
 
-                dPindex = 0
-                for dParameter in dError_dWeights:
+
+                for dIndex,dParameter in enumerate(dError_dWeights):
 
                     self.velocity.append([])
                     for elP in dParameter:
-                        self.velocity[dPindex].append(-lr * elP)
-                    dPindex += 1
+                        self.velocity[dIndex].append(-lr * elP)
+
 
             else:
-                for dPindex, dParameter in enumerate(dError_dWeights):
-                    for index, elP in enumerate(dParameter):
-                        self.velocity[dPindex][index] = - lr * elP
+                for dIndex, dParameter in enumerate(dError_dWeights):
+                    for elIndex, elP in enumerate(dParameter):
+                        self.velocity[dIndex][elIndex] = - lr * elP
 
         if self.gradientClipping:
             norm = tf.norm(self.velocity)
@@ -670,6 +663,7 @@ class NN:
     def train(self,lr=0.01,epochs=1500):
 
 
+
         for epoch in range(epochs):
             start=0
             end=self.batch_size
@@ -694,11 +688,14 @@ class NN:
 
 
                     predTargets = self.feedForward(data)
-                    # print(output)
+
 
 
                     error = self.loss(targets,predTargets)
 
+                    if self.epoch%100==0:
+                        print(self.epoch)
+                        print(error)
 
                     self.backPropagation(error,t,lr)
 
@@ -748,9 +745,9 @@ class NN:
 
             y_pred = self.predict(plotData).reshape(x.shape)
 
-            plt.title("epoch:"+str(self.epoch)+" Error:"+str(error))
-            ax.scatter(x1,x2,alpha=1,c=self.y,s=3)
-            ax.contourf(x, y, y_pred, cmap=plt.cm.brg, alpha=0.2)
+            plt.title("epoch:"+str(self.epoch)+" Error:"+str(error.numpy()))
+            ax.contourf(x, y, y_pred, cmap=plt.get_cmap("RdYlBu_r"), alpha=0.75)
+            ax.scatter(x1, x2, alpha=1, c=self.y, s=3, cmap=plt.get_cmap('viridis'))
 
         ani = animation.FuncAnimation(fig=fig, func=animate, frames=epochs, interval=1, blit=False, repeat=False)
         plt.show()
@@ -867,7 +864,7 @@ yXOR = np.array([[0],[1],[1],[0]])
 
 
 
-Layers = [4,3]
+Layers = [10,10,10]
 
 targets = x[1]
 data = x[0]
@@ -876,11 +873,12 @@ data = x[0]
 A = NN(data,
        targets,
        Layers,
-       activations="tanh",
+       activations=["tanh","sigmoid","sigmoid","tanh"],
        initializations="xavier_uniform",
        loss_function="BCE",
-       batch_normalization=True,
-       optimizer="adam")
+       batch_normalization=[True,False,False,True],
+       optimizer="adam",batch_size=30,l2Regularization=True
+       )
 
 B = NN(data,
        targets,
@@ -890,12 +888,13 @@ B = NN(data,
        loss_function="BCE",
        batch_normalization=False,
        batch_size=300,
-       optimizer="adam")
+       optimizer="adam",
+       dropout=True)
 
 
+A.plotPredictions()
 
-
-plotMultipleNNs(NNs=[A,B],data=data,height=2,length=2,names=["with BN","without BN"])
+# plotMultipleNNs(NNs=[A,B],data=data,height=2,length=2,names=["with BN","without BN"])
 
 
 # NNs = []
