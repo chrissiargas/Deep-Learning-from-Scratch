@@ -6,6 +6,7 @@ import matplotlib.animation as animation
 import sklearn.datasets
 import copy
 import pickle
+from scipy.interpolate import make_interp_spline
 
 PROJECT_ROOT_DIR = "."
 CHAPTER_ID = "svm"
@@ -14,6 +15,9 @@ os.makedirs(IMAGES_PATH, exist_ok=True)
 
 tf.config.optimizer.set_jit(True)
 
+import os
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 def save_fig(fig_id, tight_layout=True, fig_extension="png", resolution=300):
     path = os.path.join(IMAGES_PATH, fig_id + "." + fig_extension)
@@ -82,20 +86,27 @@ class NN:
                  l2Regularization=False,
                  Lambda=0.01,
                  dropout=False,
-                 dropoutProb=0.5):
+                 dropoutProb=0.5,
+                 shuffle=False,
+                 delta=1.0):
 
+        self.produceData = manipulate
         self.numberOfLayers = len(layers) + 1
+
 
         if len(data.shape)==1:
             data = np.reshape(data,(-1,1))
 
-        self.manipulateData = manipulate
 
-        if self.manipulateData:
+
+        if self.produceData:
             self.x = to_tensor(self.manipulate_data(data,columns=manipulate[0],func=manipulate[1]))
 
         else:
             self.x = to_tensor(data)
+
+
+
 
 
         if len(targets.shape)==1:
@@ -103,6 +114,13 @@ class NN:
 
         self.y = to_tensor(targets)
 
+        if shuffle:
+            indices = tf.range(start=0,limit=tf.shape(self.x)[0],dtype=tf.int32)
+            shuffled_indices = tf.random.shuffle(indices)
+
+
+            self.x = tf.gather(self.x, shuffled_indices)
+            self.y = tf.gather(self.y, shuffled_indices)
 
 
 
@@ -148,6 +166,7 @@ class NN:
 
 
         self.lossFunction = loss_function
+        self.delta = delta
 
 
         if isinstance(batch_normalization,bool):
@@ -253,7 +272,7 @@ class NN:
                 newLayer *= tf.sqrt(1 / layer)
 
             else:
-                newLayer = rng.uniform(shape=[layer, nextLayer], minval=-1., maxval=1., dtype=tf.float32)
+                newLayer = rng.normal(shape=[layer, nextLayer], dtype=tf.float32)
 
             self.Layers.append(newLayer)
 
@@ -277,6 +296,25 @@ class NN:
 
         self.parameters = [self.Layers,self.BatchLayersGamma,self.BatchLayersBeta,self.biases]
 
+    # def __setattr__(self, key, value):
+    #     if key == 'parameters':
+    #         self.__dict__[key] = copy.deepcopy(value)
+    #         self.Layers = self.parameters[0]
+    #         self.BatchLayersGamma = self.parameters[1]
+    #         self.BatchLayersBeta = self.parameters[2]
+    #         self.biases = self.parameters[3]
+    #
+    #     if key == 'x':
+    #         raise AttributeError('x is private')
+    #
+    #     if key == 'y':
+    #         raise  AttributeError('y is private')
+    #
+    #     if key == 'Layers':
+    #         raise AttributeError('Layers are private')
+    #
+
+
 
     def manipulate_data(x, columns=None, func=None):
         data = []
@@ -290,49 +328,6 @@ class NN:
 
         data = np.array(data)
         return data
-
-
-    def batch_norm(self, x, gamma, beta, scope_name, is_training=True, debug=False):
-        eps = 1e-5
-        momentum = self.batch_norm_momentum
-
-        try:
-            self._BN_MOVING_VARS, self._BN_MOVING_MEANS
-        except:
-            self._BN_MOVING_VARS, self._BN_MOVING_MEANS = {}, {}
-
-        mean = tf.reduce_mean(x, axis=0)
-        variance = tf.reduce_mean((x - mean) ** 2, axis=0)
-
-        if is_training:
-            x_hat = (x - mean) * 1.0 / tf.sqrt(variance + eps)
-
-        else:
-            x_hat = (x - self._BN_MOVING_MEANS[scope_name]) * 1.0 / tf.sqrt(self._BN_MOVING_VARS[scope_name] + eps)
-
-        out = gamma * x_hat + beta
-
-        if is_training:
-            if scope_name not in self._BN_MOVING_MEANS:
-                self._BN_MOVING_MEANS[scope_name] = mean
-            else:
-                self._BN_MOVING_MEANS[scope_name] = self._BN_MOVING_MEANS[scope_name] * momentum + mean * (1.0 - momentum)
-            if scope_name not in self._BN_MOVING_VARS:
-                self._BN_MOVING_VARS[scope_name] = variance
-            else:
-                self._BN_MOVING_VARS[scope_name] = self._BN_MOVING_VARS[scope_name] * momentum + variance * (1.0 - momentum)
-
-        if debug:
-            print('== info start ==')
-            print('scope_name = {}'.format(scope_name))
-            print('mean = {}'.format(mean))
-            print('var = {}'.format(variance))
-            print('_BN_MOVING_MEANS = {}'.format(self._BN_MOVING_MEANS[scope_name]))
-            print('_BN_MOVING_VARS = {}'.format(self._BN_MOVING_VARS[scope_name]))
-            print('output = {}'.format(out))
-            print('== info end ==')
-
-        return out
 
 
     def __str__(self):
@@ -389,6 +384,56 @@ class NN:
 
         return string
 
+    def batch_norm(self, x, gamma, beta, scope_name, is_training=True, debug=False):
+        eps = tf.constant(1e-5)
+        momentum = tf.constant(self.batch_norm_momentum)
+
+        try:
+            self._BN_MOVING_VARS, self._BN_MOVING_MEANS
+
+        except:
+
+            self._BN_MOVING_VARS, self._BN_MOVING_MEANS = [], []
+
+        mean = tf.reduce_mean(x, axis=0)
+        variance = tf.reduce_mean(tf.square(x - mean), axis=0)
+
+        if is_training:
+            x_hat = (x - mean) * 1.0 / tf.sqrt(variance + eps)
+
+        else:
+            x_hat = (x - self._BN_MOVING_MEANS[scope_name]) * 1.0 / tf.sqrt(self._BN_MOVING_VARS[scope_name] + eps)
+
+        out = gamma * x_hat + beta
+
+        if is_training:
+
+            if scope_name >= len(self._BN_MOVING_MEANS):
+                self._BN_MOVING_MEANS.append(mean)
+
+            else:
+                self._BN_MOVING_MEANS[scope_name] = self._BN_MOVING_MEANS[scope_name] * momentum + mean * (
+                            1.0 - momentum)
+
+            if scope_name >= len(self._BN_MOVING_VARS):
+                self._BN_MOVING_VARS.append(variance)
+            else:
+                self._BN_MOVING_VARS[scope_name] = self._BN_MOVING_VARS[scope_name] * momentum + variance * (
+                            1.0 - momentum)
+
+        if debug:
+            print('== info start ==')
+            print('scope_name = {}'.format(scope_name))
+            print('mean = {}'.format(mean))
+            print('var = {}'.format(variance))
+            print('_BN_MOVING_MEANS = {}'.format(self._BN_MOVING_MEANS[scope_name]))
+            print('_BN_MOVING_VARS = {}'.format(self._BN_MOVING_VARS[scope_name]))
+            print('output = {}'.format(out))
+            print('== info end ==')
+
+        return out
+
+
     def Dropout(self,weights,dropProb):
         if dropProb == 1:
             return tf.zeros_like(weights)
@@ -422,7 +467,7 @@ class NN:
             if batchNormLayer:
                 gamma = self.BatchLayersGamma[batchIndex]
                 beta = self.BatchLayersBeta[batchIndex]
-                output = self.batch_norm(output, gamma, beta, layer,is_training=training)
+                output = self.batch_norm(output, gamma, beta, batchIndex,is_training=training)
                 batchIndex += 1
 
 
@@ -434,6 +479,12 @@ class NN:
 
             elif currentActivation == "relu":
                 output = tf.keras.activations.relu(output)
+
+            elif currentActivation == "selu":
+                output = tf.keras.activations.selu(output)
+
+            elif currentActivation == "softmax":
+                output = tf.keras.activations.softmax(output)
 
             elif currentActivation == "linear":
                 pass
@@ -451,12 +502,37 @@ class NN:
 
     def loss(self,targets,predTargets):
 
-        if self.lossFunction == "MSE":
-            error = tf.reduce_sum(tf.square(targets - predTargets))
+        #REGRESSION
+        if self.lossFunction == "MAE":
+            error = tf.reduce_mean(tf.abs(targets - predTargets))
 
+        elif self.lossFunction == "MSE":
+            error = tf.reduce_mean(tf.square(targets - predTargets))
+
+        elif self.lossFunction == "RMSE":
+            error = tf.sqrt(tf.reduce_mean(tf.square(targets - predTargets)))
+
+        elif self.lossFunction == "MSLE":
+            error = tf.reduce_mean(tf.square(tf.math.log(targets) - tf.math.log(predTargets)))
+
+        elif self.lossFunction == "Huber":
+            huber = tf.keras.losses.Huber(delta=self.delta)
+            error = huber(targets,predTargets)
+
+        elif self.lossFunction == "LogCosh":
+            LogCosh = tf.keras.LogCosh()
+            error = LogCosh(targets,predTargets)
+
+
+        #BINARY CLASSIFICATION
         elif self.lossFunction == "BCE":
             bce = tf.keras.losses.BinaryCrossentropy(from_logits=False)
             error = bce(targets, predTargets)
+
+        #MULTIPLE CLASSIFICATION
+        elif self.lossFunction == "CCE":
+            cce = tf.keras.losses.CategoricalCrossentropy()
+            error = cce(targets, predTargets)
 
         l1cost = 0.0
         for weights, regLayer in zip(self.Layers, self.l1Regularization):
@@ -690,7 +766,6 @@ class NN:
                     predTargets = self.feedForward(data)
 
 
-
                     error = self.loss(targets,predTargets)
 
                     if self.epoch%100==0:
@@ -711,46 +786,277 @@ class NN:
         return error
 
     def predict(self,x):
-        data = to_tensor(x)
+
+        if len(x.shape)==1:
+            data = to_tensor(np.reshape(x,(-1,1)))
+
+        else:
+            data = to_tensor(x)
+
+
 
         pred = self.feedForward(data,training = False)
 
         return pred.numpy()
 
-    def plotPredictions(self,axes=[-1.5,1.5,-1.5,1.5],lr=0.01,epochs=1000):
-        x = np.linspace(axes[0],axes[1],100)
+    def plotPredictions(self,axes=None,lr=0.01,epochs=1000, typeOfProblem="Classification",offset=0.3):
 
-        y = np.linspace(axes[2],axes[3],100)
+        plt.rcParams["figure.figsize"] = [10., 8.]
+        plt.rcParams["figure.autolayout"] = True
 
-        x,y = np.meshgrid(x,y)
-
-        X = np.c_[x.ravel(),y.ravel()]
+        if typeOfProblem == "Regression2D":
 
 
-        fig, ax = plt.subplots()
-        x1 = extract(self.x,0)
-        x2 = extract(self.x,1)
+            if not axes:
+                maxX = tf.reduce_max(self.x)
+                minX = tf.reduce_min(self.x)
+                disX = maxX - minX
+                maxX += disX * offset
+                minX -= disX * offset
+                maxY = tf.reduce_max(self.y)
+                minY = tf.reduce_min(self.y)
+                disY = maxY - minY
+                maxY += disY * offset
+                minY -= disY * offset
 
-        if self.manipulateData:
-            plotData = self.manipulate_data(X, columns=self.manipulateData[0], func=self.manipulateData[1])
-
-        else:
-            plotData = X
+                axes = [minX, maxX, minY, maxY]
 
 
-        def animate(i):
-            ax.clear()
 
-            error = self.train(lr,epochs=1)
+            x = np.linspace(axes[0], axes[1], 100)
+            fig, ax = plt.subplots()
 
-            y_pred = self.predict(plotData).reshape(x.shape)
 
-            plt.title("epoch:"+str(self.epoch)+" Error:"+str(error.numpy()))
-            ax.contourf(x, y, y_pred, cmap=plt.get_cmap("RdYlBu_r"), alpha=0.75)
-            ax.scatter(x1, x2, alpha=1, c=self.y, s=3, cmap=plt.get_cmap('viridis'))
+            if self.produceData:
+                plotData = self.manipulate_data(x, columns=self.produceData[0], func=self.produceData[1])
 
-        ani = animation.FuncAnimation(fig=fig, func=animate, frames=epochs, interval=1, blit=False, repeat=False)
-        plt.show()
+            else:
+                plotData = x
+
+            def animate(i):
+                ax.clear()
+
+                ax.set_xlim([axes[0], axes[1]])
+                ax.set_ylim([axes[0], axes[1]])
+
+                error = self.train(lr, epochs=1)
+
+                y_pred = self.predict(plotData).reshape(x.shape)
+
+                plt.title("epoch:" + str(self.epoch) + " Error:" + str(error.numpy()))
+
+                ax.scatter(self.x, self.y, alpha=1, s=3)
+
+
+                ax.plot(x,y_pred,'--r','LineWidth',0.3)
+
+            ani = animation.FuncAnimation(fig=fig, func=animate, frames=epochs, interval=1, blit=False, repeat=False)
+            plt.show()
+
+        elif typeOfProblem == "Regression3D":
+
+            x1 = extract(self.x, 0)
+            x2 = extract(self.x, 1)
+
+            if not axes:
+                maxX = tf.reduce_max(x1)
+                minX = tf.reduce_min(x1)
+                disX = maxX - minX
+                maxX += disX * offset
+                minX -= disX * offset
+                maxY = tf.reduce_max(x2)
+                minY = tf.reduce_min(x2)
+                disY = maxY - minY
+                maxY += disY * offset
+                minY -= disY * offset
+                maxZ = tf.reduce_max(self.y)
+                minZ = tf.reduce_min(self.y)
+                disZ = maxZ - minZ
+                maxZ += disZ * offset
+                minZ -= disZ * offset
+                axes = [minX, maxX, minY, maxY]
+
+
+
+            x = np.linspace(axes[0], axes[1], 100)
+
+            y = np.linspace(axes[2], axes[3], 100)
+
+            x, y = np.meshgrid(x, y)
+
+            X = np.c_[x.ravel(), y.ravel()]
+
+
+
+            fig = plt.figure()
+            ax = fig.add_subplot(111,projection='3d')
+
+
+
+            if self.produceData:
+                plotData = self.manipulate_data(X, columns=self.produceData[0], func=self.produceData[1])
+
+            else:
+                plotData = X
+
+            def animate(i):
+                ax.clear()
+
+                ax.set_xlim([axes[0], axes[1]])
+                ax.set_ylim([axes[0], axes[1]])
+                ax.set_zlim([minZ, maxZ])
+
+                error = self.train(lr, epochs=1)
+
+
+                y_pred = self.predict(plotData).reshape(x.shape)
+
+                plt.title("epoch:" + str(self.epoch) + " Error:" + str(error.numpy()))
+                ax.plot_wireframe(x, y, y_pred, rstride=1, cstride=1, linewidth=0.004, antialiased=False, alpha=0.8,cmap=plt.get_cmap("RdYlBu_r"))
+                ax.scatter(x1, x2, self.y,color='red', alpha=1, s=5,depthshade=True)
+
+            ani = animation.FuncAnimation(fig=fig, func=animate, frames=epochs, interval=1, blit=False, repeat=False)
+            plt.show()
+
+
+
+
+        elif typeOfProblem=="classification":
+
+            x1 = extract(self.x, 0)
+            x2 = extract(self.x, 1)
+
+            if not axes:
+                maxX = tf.reduce_max(x1)
+                minX = tf.reduce_min(x1)
+                disX = maxX - minX
+                maxX += disX * offset
+                minX -= disX * offset
+                maxY = tf.reduce_max(x2)
+                minY = tf.reduce_min(x2)
+                disY = maxY - minY
+                maxY += disY * offset
+                minY -= disY * offset
+
+                axes = [minX, maxX, minY, maxY]
+
+            x = np.linspace(axes[0],axes[1],100)
+
+            y = np.linspace(axes[2],axes[3],100)
+
+            x,y = np.meshgrid(x,y)
+
+            X = np.c_[x.ravel(),y.ravel()]
+
+
+            fig, ax = plt.subplots()
+
+
+            if self.produceData:
+                plotData = self.manipulate_data(X, columns=self.produceData[0], func=self.produceData[1])
+
+            else:
+                plotData = X
+
+
+            def animate(i):
+                ax.clear()
+                ax.set_xlim([axes[0], axes[1]])
+                ax.set_ylim([axes[0], axes[1]])
+
+                error = self.train(lr,epochs=1)
+
+                y_pred = self.predict(plotData).reshape(x.shape)
+
+                plt.title("epoch:"+str(self.epoch)+" Error:"+str(error.numpy()))
+                ax.contourf(x, y, y_pred, cmap=plt.get_cmap("RdYlBu_r"), alpha=0.75)
+                ax.scatter(x1, x2, alpha=1, c=self.y, s=3, cmap=plt.get_cmap('viridis'))
+
+            ani = animation.FuncAnimation(fig=fig, func=animate, frames=epochs, interval=1, blit=False, repeat=False)
+            plt.show()
+
+
+        elif typeOfProblem=="classification3":
+            x1 = extract(self.x, 0)
+            x2 = extract(self.x, 1)
+
+            if not axes:
+                maxX = tf.reduce_max(x1)
+                minX = tf.reduce_min(x1)
+                disX = maxX - minX
+                maxX += disX/2
+                minX -= disX/2
+                maxY = tf.reduce_max(x2)
+                minY = tf.reduce_min(x2)
+                disY = maxY - minY
+                maxY += disY / 2
+                minY -= disY / 2
+
+
+                axes = [minX, maxX, minY, maxY]
+
+
+            listOfColors = ['b','g','r','c','m','y']
+
+            x = np.linspace(axes[0],axes[1],100)
+
+            y = np.linspace(axes[2],axes[3],100)
+
+            x,y = np.meshgrid(x,y)
+
+            X = np.c_[x.ravel(),y.ravel()]
+
+
+            fig, ax = plt.subplots()
+
+
+            if self.produceData:
+                plotData = self.manipulate_data(X, columns=self.produceData[0], func=self.produceData[1])
+
+            else:
+                plotData = X
+
+            groupsx1 = [[] for _ in range(self.y.shape[-1])]
+            groupsx2 = [[] for _ in range(self.y.shape[-1])]
+            filter = np.array([i for i in range(self.y.shape[-1])])
+
+            for dx1,dx2,dy in zip(x1,x2,self.y):
+                index = np.sum(dy*filter).astype(np.int32)
+                groupsx1[index].append(dx1)
+                groupsx2[index].append(dx2)
+
+
+            from matplotlib.colors import ListedColormap
+            custom_cmap = ListedColormap(listOfColors[:self.y.shape[-1]])
+
+            colors = listOfColors[:self.y.shape[-1]]
+            names = np.array([str(i) for i in range(self.y.shape[-1])])
+
+            def animate(i):
+                ax.clear()
+                ax.set_xlim([axes[0], axes[1]])
+                ax.set_ylim([axes[0], axes[1]])
+
+                error = self.train(lr,epochs=1)
+
+
+                y_pred = self.predict(plotData)
+                y_pred = np.argmax(y_pred, axis=-1)
+                y_pred = y_pred.reshape(x.shape)
+
+
+
+
+                plt.title("epoch:"+str(self.epoch)+" Error:"+str(error.numpy()))
+
+                ax.contourf(x, y, y_pred, cmap=custom_cmap, alpha=0.4)
+
+                for name,groupx1,groupx2,color in zip(names,groupsx1,groupsx2,colors):
+
+                    ax.scatter(groupx1, groupx2, alpha=1, s=3, color=color,label=name)
+
+            ani = animation.FuncAnimation(fig=fig, func=animate, frames=epochs, interval=1, blit=False, repeat=False)
+            plt.show()
 
 
 
@@ -768,6 +1074,7 @@ def loadNN(name):
     file = open(name + ".txt", 'rb')
     out = pickle.load(file)
     return copy.deepcopy(out)
+
 
 
 
@@ -849,84 +1156,148 @@ def plotMultipleNNs(NNs,data,axes=[-1.5,1.5,-1.5,1.5],lr=0.01,epochs=1000,manipu
 def extract(lst,pos):
     return [element[pos] for element in lst]
 
-x = sklearn.datasets.make_circles(n_samples=300,noise=0.15,factor=0.2)
-
-x1 = extract(x[0],0)
-x2 = extract(x[0],1)
-y = x[1]
-
-# plt.scatter(x1,x2,alpha=1,c=y,s=3)
-# plt.show()
-
-xXOR = np.array([[0,0],[0,1],[1,0],[1,1]])
-
-yXOR = np.array([[0],[1],[1],[0]])
+def oneHot(targets):
+    targets
+    y = np.zeros((targets.size, targets.max() + 1))
+    y[np.arange(targets.size), targets] = 1
+    return y.astype(int)
 
 
+# w = tf.constant(1.)
+# b = tf.constant(0.)
+# center = tf.constant(2.)
+#
+# u, v = np.mgrid[0:2*np.pi:40j, 0:2*np.pi:40j]
+# x = np.cos(u)*np.sin(v)
+# x=x.flatten()
+# y = np.sin(u)*np.sin(v)
+# y=y.flatten()
+# z = np.cos(v)
+# z=z.flatten()
+#
+# indices = [i for i,dz in enumerate(z) if dz>=0]
+# x,y,z = x[indices],y[indices],z[indices]
+#
+#
+#
+# data = np.vstack((x,y)).T
+# targets = z
+#
+#
+# targets += tf.random.normal(shape=y.shape, stddev=0.1)
+#
+#
+# Layers = [10,10,10,10,10,10]
+# B = NN(data,
+#        targets,
+#        Layers,
+#        loss_function="MSE",
+#        activations=["selu","selu","selu","selu","selu","selu","linear"],
+#        initializations="lecun_normal",
+#        batch_normalization=True,
+#        optimizer="nesterov",
+#        shuffle=True,
+#        l2Regularization=True
+#        )
+#
+#
+# B.plotPredictions(typeOfProblem="Regression3D",lr=0.03)
+#
+# xXOR = np.array([[0,0],[0,1],[1,0],[1,1]])
+#
+# yXOR = np.array([[0],[1],[1],[0]])
+#
+#
+# Layers = [4,4]
+# D = NN(xXOR,
+#        yXOR,
+#        Layers,
+#        loss_function="BCE",
+#        activations=["tanh","tanh","sigmoid"],
+#        initializations="xavier_uniform",
+#        batch_normalization=False,
+#        optimizer="nesterov",
+#        batch_size=None,
+#        shuffle=True
+#        )
+#
+#
+# D.plotPredictions(typeOfProblem="classification",lr=0.1)
+#
+#
+#
+# x = sklearn.datasets.make_circles(n_samples=300,noise=0.15,factor=0.2)
+#
+# targets = x[1]
+# data = x[0]
+#
+# Layers = [5,5,5,5]
+# C = NN(data,
+#        targets,
+#        Layers,
+#        loss_function="BCE",
+#        activations=["selu","selu","selu","selu","sigmoid"],
+#        initializations=["lecun_uniform","lecun_uniform","lecun_uniform","lecun_uniform","xavier_uniform"],
+#        batch_normalization=True,
+#        optimizer="nadam",
+#        batch_size=None,
+#        shuffle=True
+#        )
+#
+#
+# C.plotPredictions(typeOfProblem="classification",lr=0.01)
+#
 
-Layers = [10,10,10]
-
-targets = x[1]
-data = x[0]
+#
+#
+# w = tf.constant(10.)
+# b = tf.constant(2.)
+#
+# x = tf.random.uniform([200],minval=-10.,maxval=10.)
+# y = tf.cos(x)*w + b
+#
+# Layers = [5,5,5,5]
+# A = NN(x,
+#        y,
+#        Layers,
+#        loss_function="MSE",
+#        activations=["selu","selu","selu","selu","linear"],
+#        initializations="lecun_normal",
+#        batch_normalization=True,
+#        optimizer="nadam",
+#        batch_size=None,
+#        shuffle=True
+#        )
+#
+#
+# A.plotPredictions(typeOfProblem="Regression2D",lr=0.01)
 
 # print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
-A = NN(data,
-       targets,
+
+#
+from sklearn.datasets import make_blobs
+# from sklearn.datasets import make_classification
+
+x , y = make_blobs(n_samples=300, centers=4)
+# x,y = make_classification(n_samples=300, n_features=2, n_informative=2,n_redundant=0, n_repeated=0, n_classes=2, n_clusters_per_class=2,class_sep=1,flip_y=0.2)
+
+y = oneHot(y)
+
+
+Layers = [10,10,10,10]
+F = NN(x,
+       y,
        Layers,
-       activations=["tanh","sigmoid","sigmoid","tanh"],
-       initializations="xavier_uniform",
-       loss_function="BCE",
-       batch_normalization=[True,False,False,True],
-       optimizer="adam",batch_size=30,l2Regularization=True
+       loss_function="CCE",
+       activations=["selu","selu","selu","selu","softmax"],
+       initializations="lecun_normal",
+       batch_normalization=True,
+       optimizer="momentum"
        )
 
-B = NN(data,
-       targets,
-       Layers,
-       activations="tanh",
-       initializations="xavier_uniform",
-       loss_function="BCE",
-       batch_normalization=False,
-       batch_size=300,
-       optimizer="adam",
-       dropout=True)
 
 
-A.plotPredictions()
-
-# plotMultipleNNs(NNs=[A,B],data=data,height=2,length=2,names=["with BN","without BN"])
-
-
-# NNs = []
-# for _ in range(6):
-#     NNs.append(copy.deepcopy(A))
-
-#
-# NNs[1].optimizer = "momentum"
-# NNs[2].optimizer = "nesterov"
-# NNs[3].optimizer = "RMSProp"
-# NNs[4].optimizer = "adam"
-# NNs[5].optimizer = "nadam"
-
-
-
-
-
-# print(x[0])
-# print(x[1])
-# C = NeuralNetwork(xXOR,yXOR)
-# C.plotPredictions()
-#
-# B = NN(xXOR,yXOR,[4],activations="sigmoid",initializations="xavier_normal",)
-# B.plotPredictions()
-
-
-# x = [[1,2],[3,4],[4,6]]
-# x = to_tensor(x)
-# gamma = to_tensor([1,1])
-# beta = to_tensor([0,0])
-#
-# batch_norm(x,gamma,beta,0,debug=True)
+F.plotPredictions(typeOfProblem="classification3",lr=0.01,offset=0.3)
 
 
 
